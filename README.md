@@ -1,8 +1,5 @@
 These files contain scripts for generating the curve for theorem 1 in the paper https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=8006984
 
-The file named theorem1.py is the most accurate iteration thus far, including both functions q(t) and p(t). This takes a lot of time to run due to the large number of combinations required for 
-the Monte Carlo simulation of the It rv. 
+150.py implements the random codebook perfectly up to 150 users. Still running simulations to see if it runs well after.
 
-The file named analytical_paper_debug.py is without q(t) and hence without the MC simulation, making it much faster to run. 
-
-Overall the latter file is around 3dB larger than expected and the former is 2dB larger than expected, however the generally increasing trend in the results they produce promises that there is good core logic still. 
+theorem1.py and analytical_paper_debug.py were previous implementations with different variations.
