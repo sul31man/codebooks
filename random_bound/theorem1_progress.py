@@ -40,27 +40,22 @@ def E0(rho1, a, b):
 # ------------------------------------------------------------
 #  E(t)  – maximise (6)–(8)  on ρ,ρ₁ ∈ [0,1]
 # ------------------------------------------------------------
-def E_t(P_prime, t, Ka, n, M, grid=61):
-    best = -np.inf
-    rhos, rho1s = np.linspace(0, 1, grid), np.linspace(0, 1, grid)
-
+def E_t(P_prime, t, Ka, n, M, grid=121):        # ← was 61
+    best, rhos = -np.inf, np.linspace(0, 1, grid)
     for rho in rhos:
-        for rho1 in rho1s:
+        for rho1 in rhos:
             D = (P_prime * t - 1) ** 2 + 4 * P_prime * t * (1 + rho * rho1) / (1 + rho)
             if D < 0: continue
             lam = (P_prime * t - 1 + math.sqrt(D)) / (4 * (1 + rho * rho1) * P_prime * t)
             if lam <= 0: continue
             mu  = rho * lam / (1 + 2 * P_prime * t * lam)
             if mu <= 0: continue
-
-            a  = (rho / 2) * log(1 + 2 * P_prime * t * lam) + 0.5 * log(1 + 2 * P_prime * t * mu)
-            b  = rho * lam - mu / (1 + 2 * P_prime * t * mu)
-            e0 = E0(rho1, a, b)
+            a   = (rho / 2) * log(1 + 2 * P_prime * t * lam) + 0.5 * log(1 + 2 * P_prime * t * mu)
+            b   = rho * lam - mu / (1 + 2 * P_prime * t * mu)
+            e0  = E0(rho1, a, b)
             if not math.isfinite(e0): continue
-
             val = -rho * rho1 * t * R1(t, M, n) - rho1 * R2(t, Ka, n) + e0
             best = max(best, val)
-
     return max(0.0, best)
 
 def p_t(P_prime, t, Ka, n, M):
@@ -105,22 +100,28 @@ def I_t(t, Ka, codebook, n, P_prime):
 # ------------------------------------------------------------
 #  q_t  – eq. (5)
 # ------------------------------------------------------------
-def q_t(t, Ka, codebook, n, P_prime, M, N_mc=5000):
-    I_samples = [I_t(t, Ka, codebook, n, P_prime) for _ in range(N_mc)]
-    R1v, R2v  = R1(t, M, n), R2(t, Ka, n)
-    a_star    = n * (t * R1v + R2v)                # pivot point
+from scipy.optimize import minimize_scalar
 
-    g_min = min(I_samples) - 5
-    g_max = max(a_star + 20, max(I_samples) + 5)
-    gammas = np.linspace(g_min, g_max, 400)
+def q_t(t, Ka, codebook, n, P_prime, M, N_mc=20000):  # ← was 100
+    I_samp = np.array([I_t(t, Ka, codebook, n, P_prime) for _ in range(N_mc)])
+    R1v, R2v = R1(t, M, n), R2(t, Ka, n)
+    a_star   = n * (t * R1v + R2v)                    # pivot of union term
 
-    best = float('inf')
-    I_arr = np.array(I_samples)
-    for g in gammas:
-        prob   = np.mean(I_arr <= g)
-        union  = math.exp(a_star - g)
-        best   = min(best, prob + union)
-    return best
+    # wide γ sweep
+    g_min  = min(I_samp) - 30
+    g_max  = max(a_star + 30, max(I_samp) + 5)
+    gamma  = np.linspace(g_min, g_max, 800)           # ← was 100
+    prob   = (I_samp[:, None] <= gamma).mean(axis=0)
+    union  = np.exp(a_star - gamma)
+    coarse = prob + union
+    best   = coarse.min()
+
+    # local refine around the best coarse γ
+    g0 = gamma[coarse.argmin()]
+    res = minimize_scalar(
+        lambda g: (I_samp <= g).mean() + math.exp(a_star - g),
+        bracket=(g0 - 5, g0 + 5), tol=1e-3)
+    return min(best, res.fun)
 
 # ------------------------------------------------------------
 #  ε  upper-bound
