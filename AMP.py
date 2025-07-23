@@ -157,7 +157,10 @@ class SPARC:
         
         i = 0
         
+        # Ensure at least one user is active for testing
         active_users = np.random.randint(0,2,self.Ka)
+        if np.sum(active_users) == 0:  # If no users are active, make first user active
+            active_users[0] = 1
         self.original_messages = []
 
         for message, mapping in inner_coding.items():
@@ -266,7 +269,8 @@ class SPARC:
         # amplitude of ONE user's non-zero entry  (match whatever you used in inner_coding)
         gamma  = np.sqrt(self.P_hat / L)                   # √( P̂ / L )
         alpha  = N / n                                     # = 2^{J} L / n   (Onsager coef)
-
+        
+        y = y/gamma
         # ---------- establish functions needed for this AMP method  -------------  (eq. 7)
         
         def p_k(k): #equation 7
@@ -285,7 +289,10 @@ class SPARC:
 
                 p = p_k(k)
 
-                term2 = p*np.exp((x-k*(np.sqrt(self.P_hat)))**2 / (2*(tao**2)))
+                # Correct exponent - positive as per equation (11)
+                exponent = (x-k*(np.sqrt(self.P_hat)))**2 / (2*(tao**2))
+                exponent = np.clip(exponent, 0, 50)  # Much more conservative clipping for positive exponent
+                term2 = p*np.exp(exponent)
 
                 term += term2
 
@@ -295,68 +302,150 @@ class SPARC:
 
         def f(x, z):##equation 10 applied to every dimension
 
-            tao = tao_func(z)
-            denominator = Z(x, z)
-            term = np.zeros_like(x)
             
-            for k in range(Ka+1):
+            denominator = Z(x, z)
+            
+            # Add small epsilon to prevent division by zero
+            eps = 1e-12
+            denominator = np.maximum(denominator, eps)
 
-                p = p_k(k)
-
-                term2 = p*k*np.exp((x-k*(np.sqrt(self.P_hat)))**2 / (2*(tao**2)))
-
-                term += term2
+            term = g(x,z)
 
             term *= np.sqrt(self.P_hat)
             
             term /= denominator 
 
             return term
-
         
+
+        def f_prime(x, z): #derivative of f wrt x
+
+            z_val = Z(x, z)
+            numerator = z_val*g_prime(x, z) - g(x, z)*Z_prime(x, z)
+
+            denominator = z_val**2
             
+            # Add small epsilon to prevent division by zero
+            eps = 1e-12
+            denominator = np.maximum(denominator, eps)
+
+            term = numerator/denominator 
+
+            term *= np.sqrt(self.P_hat)
+
+            return term
+        
+        def g_prime(x,z):#derivative of g wrt x
+
+            tao = tao_func(z)
+
+            term = np.zeros_like(x)
+            
+            for k in range(Ka+1):
+
+                p = p_k(k)
+
+                exponent = (x-k*(np.sqrt(self.P_hat)))**2 / (2*(tao**2))
+                exponent = np.clip(exponent, 0, 50)
+                term2 = p*k*(x-k*np.sqrt(self.P_hat))*np.exp(exponent)/(tao**2)
+
+                term += term2
+
+            
+            
+            return term
+        
+        def g(x,z):
+
+            tao = tao_func(z)
+            term = np.zeros_like(x)
+
+            for k in range(Ka+1):
+
+                p = p_k(k)
+
+                exponent = (x-k*(np.sqrt(self.P_hat)))**2 / (2*(tao**2))
+                exponent = np.clip(exponent, 0, 50)
+                term2 = p*k*np.exp(exponent)
+
+                term += term2
+
+            return term
+
+
+        def Z_prime(x ,z):#derivative of z wrt x
+
+            tao = tao_func(z)
+
+            term = 0
+            
+            for k in range(Ka+1):
+
+                p = p_k(k)
+
+                exponent = (x-k*(np.sqrt(self.P_hat)))**2 / (2*(tao**2))
+                exponent = np.clip(exponent, 0, 50)
+                term2 = p*(x-k*np.sqrt(self.P_hat))*np.exp(exponent)/(tao**2)
+ 
+                term += term2
+
+            
+            return term 
+
 
         
         def tao_func(z): ##the tao function
 
             p_o = (1 - 2**(-J))**Ka
 
-            z = np.linalg.norm(z)
+            z_norm = np.linalg.norm(z)
 
-            term = z / (n*p_o) 
+            # Add small epsilon for numerical stability
+            eps = 1e-10
+            term = max(z_norm / (n), eps) 
 
             return np.sqrt(term)
             
         
         ##now we need to initialise the first parts of our iterable variables 
 
-        theta = np.zeros_like(sparse_vector) #initialise the theta variable
+        theta = np.zeros(N) #initialise the theta variable to match sparse vector dimension
 
-        z = y #initialise the z variable to be the received signal
+        z = y.copy() #initialise the residual with the received signal
         
         
-        for _ in range(T_max):
+        for t in range(T_max):
         
            parameter1 = A.T@(z) + theta  #this will be input ot the function f we defined earlier in equation 10
 
            theta_next = f(parameter1, z)  #the next iteration of theta
 
-           z_next = y - A@theta_next + (((2**J)*L)/n)*(z)*np.mean(theta_next) #the next iteration of the residal 
+           deriv_next = f_prime(parameter1, z) #derivative used in equation 9
 
-           
+           z_next = y - A@theta_next + (((2**J)*L)/n)*(z)*np.mean(deriv_next) #the next iteration of the residal 
+
+           # Debug information
+           #if t < 3 or t % 5 == 0:
+               #print(f"Iteration {t}: ||theta|| = {np.linalg.norm(theta_next):.6f}, ||z|| = {np.linalg.norm(z_next):.6f}")
+
            z = z_next 
+           
            theta = theta_next
 
         theta  = theta / gamma 
-
-        print(theta)
+        
+        print("Original sparse vector (first 20 elements):", self.sparse_vector)
+        #print("Original signal", self.signal)
+        #print("Received signal", y[:40])
+        print("Recovered sparse vector (first 20 elements):", theta[:40])
+        #print("MSE between original and recovered:", np.mean((self.sparse_vector - theta)**2))
 
         return theta
         
 
 
 
-
+###need to look into fixing the AMP method. has issues big time. 
 
 
 
@@ -375,14 +464,13 @@ class SPARC:
 
         
 
-system = SPARC(3, 4, 6, 24, 128, 1, 5)
+system = SPARC(3, 4, 6, 24, 128, 1, 10)
 
 
 sparse_vector = system.generate_signal()
-system.decode_signal()
 system.transmit_signal()
 system.amp_decode()
-print(system.transmitted_signal)
+
 
 
 
