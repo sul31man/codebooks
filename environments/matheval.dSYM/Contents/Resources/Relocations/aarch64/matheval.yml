@@ -1,0 +1,17 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/suleimanmahmood/Documents/AI_learning/RL_codebooks/environments/matheval'
+relocations:
+  - { offsetInCU: 0x26, offset: 0x26, size: 0x8, addend: 0x0, symName: _push_number, symObjAddr: 0x0, symBinAddr: 0x100003138, symSize: 0x4C }
+  - { offsetInCU: 0x6F, offset: 0x6F, size: 0x8, addend: 0x0, symName: _push_number, symObjAddr: 0x0, symBinAddr: 0x100003138, symSize: 0x4C }
+  - { offsetInCU: 0xA1, offset: 0xA1, size: 0x8, addend: 0x0, symName: _pop_number, symObjAddr: 0x4C, symBinAddr: 0x100003184, symSize: 0x5C }
+  - { offsetInCU: 0xC9, offset: 0xC9, size: 0x8, addend: 0x0, symName: _push_operator, symObjAddr: 0xA8, symBinAddr: 0x1000031E0, symSize: 0x50 }
+  - { offsetInCU: 0xFB, offset: 0xFB, size: 0x8, addend: 0x0, symName: _pop_operator, symObjAddr: 0xF8, symBinAddr: 0x100003230, symSize: 0x5C }
+  - { offsetInCU: 0x123, offset: 0x123, size: 0x8, addend: 0x0, symName: _peek_operator, symObjAddr: 0x154, symBinAddr: 0x10000328C, symSize: 0x50 }
+  - { offsetInCU: 0x14B, offset: 0x14B, size: 0x8, addend: 0x0, symName: _get_precedence, symObjAddr: 0x1A4, symBinAddr: 0x1000032DC, symSize: 0xBC }
+  - { offsetInCU: 0x173, offset: 0x173, size: 0x8, addend: 0x0, symName: _is_right_associative, symObjAddr: 0x260, symBinAddr: 0x100003398, symSize: 0x20 }
+  - { offsetInCU: 0x19B, offset: 0x19B, size: 0x8, addend: 0x0, symName: _get_next_token, symObjAddr: 0x280, symBinAddr: 0x1000033B8, symSize: 0x26C }
+  - { offsetInCU: 0x1ED, offset: 0x1ED, size: 0x8, addend: 0x0, symName: _apply_operator, symObjAddr: 0x4EC, symBinAddr: 0x100003624, symSize: 0x10C }
+  - { offsetInCU: 0x231, offset: 0x231, size: 0x8, addend: 0x0, symName: _evaluate_expression, symObjAddr: 0x6E0, symBinAddr: 0x100003818, symSize: 0x3DC }
+  - { offsetInCU: 0x355, offset: 0x355, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0xACC, symBinAddr: 0x100003C04, symSize: 0x218 }
+...
