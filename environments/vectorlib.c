@@ -29,7 +29,7 @@ Vector* create_vector(int size){
     
     if (!vec){
 
-        printf("Fucked up !\n");
+        printf("Vector allocation failed!\n");
         
         return NULL;
     }
@@ -60,27 +60,41 @@ void set_vector_values(Vector* vec, double* values){
 
 void print_vector(Vector* vec){
 
+    printf("[");
     for (int i = 0; i < vec->size; i++){
 
-        printf(vec->data[i]);
+        printf("%.2f", vec->data[i]);
+        if (i < vec->size - 1) {
+            printf(", ");
+        }
 
     }
+    printf("]\n");
 
+}
+
+void free_vector(Vector* vec){
+    if (vec) {
+        if (vec->data) {
+            free(vec->data);
+        }
+        free(vec);
+    }
 }
 
 double dot_product(Vector* vec1, Vector* vec2){
 
     if (vec1->size != vec2->size){
 
-        printf("fucked up!");
-        return NULL;
+        printf("Vector size mismatch for dot product!\n");
+        return -1.0;
     }
 
     double sum = 0;
 
     for(int i = 0; i < vec1->size; i++){
 
-        sum += vec1->data[i] * vec2->data[j]; 
+        sum += vec1->data[i] * vec2->data[i]; 
     }
 
     return sum;
@@ -142,7 +156,7 @@ Matrix* matrix_multiply(Matrix* mat1, Matrix* mat2){
     if (mat1->cols != mat2->rows){
 
 
-        printf("brav");
+        printf("Matrix dimension mismatch for multiplication!\n");
         
         return NULL; 
     }
@@ -167,6 +181,8 @@ Matrix* matrix_multiply(Matrix* mat1, Matrix* mat2){
         }
 
     }
+    
+    return result;
 }
 
 void free_matrix(Matrix* mat){
@@ -234,5 +250,29 @@ Vector* matrix_vector_multiply(Matrix* mat, Vector* vec){
     }
 
     return result; 
+}
+
+void print_matrix(Matrix* mat){
+    
+    printf("Matrix %dx%d:\n", mat->rows, mat->cols);
+    for (int i = 0; i < mat->rows; i++){
+        printf("[");
+        for (int j = 0; j < mat->cols; j++){
+            printf("%.2f", mat->data[i][j]);
+            if (j < mat->cols - 1) {
+                printf(", ");
+            }
+        }
+        printf("]\n");
+    }
+}
+
+void set_matrix_values(Matrix* mat, double** values){
+    
+    for (int i = 0; i < mat->rows; i++){
+        for (int j = 0; j < mat->cols; j++){
+            mat->data[i][j] = values[i][j];
+        }
+    }
 }
 
