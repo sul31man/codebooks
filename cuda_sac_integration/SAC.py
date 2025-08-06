@@ -38,6 +38,9 @@ class CodewordPolicy(nn.Module):
         x = self.relu(self.fc1(x))
 
         log_std = self.fc_std(x) #this will output the log standard deviation for continuous action vectors
+        
+        # Clamp log_std to prevent numerical instability
+        log_std = torch.clamp(log_std, -20, 2)
 
         std = torch.exp(log_std)
 

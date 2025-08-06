@@ -41,12 +41,20 @@ class CodewordPolicy(nn.Module):
 
     def forward(self, x):
         x = self.relu(self.fc1(x))
-        log_std = self.fc_std(x) #this will output the log standard deviation for continuous action vectors
+        
+        log_std = self.fc_std(x)  # this will output the log standard deviation for continuous action vectors
+        
+        # Clamp log_std to prevent numerical instability
+        log_std = torch.clamp(log_std, -20, 2)
+        
         std = torch.exp(log_std)
+        
         # Create normal distribution with mean 0 and learned std
         dist = torch.distributions.Normal(torch.zeros_like(std), std)
+        
         action = dist.sample()
         log_prob = dist.log_prob(action).sum(dim=-1)  # Sum over action dimensions
+        
         return action, log_prob
 
 class QNetwork(nn.Module):
@@ -124,15 +132,15 @@ def main():
             action, log_prob = matrix_policy(state)
             
             # Take step in CUDA environment
-            next_state, reward, terminated, truncated, info = env.step(action)
+            next_state, reward, done, info = env.step(action)
             next_state = torch.tensor(next_state, dtype=torch.float32)
             
             # Store experience in buffer
-            buffer.push(state, action, next_state, reward, terminated or truncated)
+            buffer.push(state, action, next_state, reward, done)
             
             episode_reward += reward
             state = next_state
-            done = terminated or truncated
+            done = done
         
         # Only train if buffer has enough samples
         if len(buffer.buffer) < batch_size:

@@ -114,8 +114,8 @@ class CUDAEnvironment:
         self.total_reward = 0.0
         self.best_hit_rate = 0.0
         
-        # Clear the action buffer (this would need to be implemented in CUDA)
-        self.action_buffer = []
+        # DO NOT clear the action buffer - it should persist across episodes!
+        # self.action_buffer = []  # ❌ REMOVED - This was wrong!
         
         # Return initial state (you can modify this based on your state representation)
         initial_state = np.zeros(10, dtype=np.float32)  # Example state dimension

@@ -6,6 +6,9 @@
 #include <math.h>
 #include <string.h>
 
+// Forward declaration
+__global__ void mainKernel(float* codebook, int rows, int cols, int Ka, int num_sims, int* hit_rate);
+
 // Constants and buffer management
 #define MAX_COLS 100
 #define MAX_ROWS 100
@@ -214,8 +217,8 @@ __global__ void mainKernel(float* codebook, int rows, int cols, int Ka, int num_
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
     if (idx < num_sims) {
-        float messages[rows];
-        float original_messages[rows];
+        float messages[MAX_ROWS];
+        float original_messages[MAX_ROWS];
         
         // Initialize arrays
         for (int i = 0; i < rows; i++) {
@@ -236,7 +239,7 @@ __global__ void mainKernel(float* codebook, int rows, int cols, int Ka, int num_
         noiseAdder(messages, noise_std, rows);
         
         // Decode messages
-        float best_msg[rows];
+        float best_msg[MAX_ROWS];
         msg_denoiser_greedy(messages, codebook, rows, cols, Ka, best_msg);
         
         // Compare and update hit rate
