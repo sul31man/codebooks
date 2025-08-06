@@ -8,11 +8,11 @@ import sys
 import os
 import torch
 import numpy as np
-
+##reminder to set devices to cuda so that we minimise data travel
 # Add the parent directory to the path to import SAC
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from environment_wrapper import CUDAEnvironment
+from cuda_sac_integration.environment_wrapper import CUDAEnvironment
 
 def test_sac_integration():
     """Test the integration between SAC agent and CUDA environment."""

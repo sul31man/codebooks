@@ -12,18 +12,17 @@ class CUDAEnvironment:
     and provides a gym-like interface for the SAC agent.
     """
     
-    def __init__(self, cols: int = 25, rows: int = 23, Ka: int = 1, num_sims: int = 1000):
+    def __init__(self, Ka: int = 1, num_sims: int = 1000):
         """
         Initialize the CUDA environment wrapper.
         
         Args:
-            cols: Number of columns in the codebook (action dimension)
-            rows: Number of rows in the codebook 
             Ka: Number of active users
             num_sims: Number of simulations to run for evaluation
         """
-        self.cols = cols
-        self.rows = rows
+        # Hardcoded dimensions from CUDA constants
+        self.cols = 16 * 64  # L*N = 1024
+        self.rows = 512      # n = 512
         self.Ka = Ka
         self.num_sims = num_sims
         
@@ -91,21 +90,32 @@ class CUDAEnvironment:
         self.lib.get_codebook.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int]
         self.lib.get_codebook.restype = None
         
+        # Add new function signatures
+        self.lib.initialize_buffer_with_random.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.lib.initialize_buffer_with_random.restype = None
+        
         self.lib.run_simulation.argtypes = [
-            ctypes.c_int,  # rows
-            ctypes.c_int,  # cols  
             ctypes.c_int,  # Ka
             ctypes.c_int,  # num_sims
             ctypes.POINTER(ctypes.c_int)  # hit_rate
         ]
         self.lib.run_simulation.restype = None
         
+        # Initialize buffer with random matrix using hardcoded dimensions
+        self._initialize_random_buffer()
+        
         # Initialize buffer
         self.action_buffer = []
-        
+    
+    def _initialize_random_buffer(self):
+        """Initialize the action buffer with random actions using hardcoded dimensions."""
+        # Use hardcoded dimensions from CUDA: n=512 rows, L*N=16*64=1024 cols
+        self.lib.initialize_buffer_with_random(ctypes.c_int(512), ctypes.c_int(16*64))
+    
     def reset(self) -> np.ndarray:
         """
         Reset the environment and return initial state.
+        Note: This does NOT reset the action buffer - it persists across episodes.
         
         Returns:
             Initial state as numpy array
@@ -114,8 +124,8 @@ class CUDAEnvironment:
         self.total_reward = 0.0
         self.best_hit_rate = 0.0
         
-        # Clear the action buffer (this would need to be implemented in CUDA)
-        self.action_buffer = []
+        # DO NOT reinitialize buffer - it should persist across episodes
+        # The buffer was already initialized once in _initialize_environment()
         
         # Return initial state (you can modify this based on your state representation)
         initial_state = np.zeros(10, dtype=np.float32)  # Example state dimension
@@ -149,23 +159,28 @@ class CUDAEnvironment:
         self.lib.add_action_to_buffer(action_array, ctypes.c_int(self.cols))
         self.action_buffer.extend(action)
         
-        # Get current codebook from buffer
-        codebook_size = self.rows * self.cols
-        codebook_array = (ctypes.c_float * codebook_size)()
-        self.lib.get_codebook(codebook_array, ctypes.c_int(self.rows), ctypes.c_int(self.cols))
+        # Run simulation to get performance (the CUDA function gets codebook internally)
+        hit_rates = []
+        upper_val = 35
+        Ka_values = np.linspace(5, upper_val, 5)
         
-        # Run simulation to get performance
-        hit_rate = ctypes.c_int(0)
-        self.lib.run_simulation(
-            ctypes.c_int(self.rows),
-            ctypes.c_int(self.cols), 
-            ctypes.c_int(self.Ka),
-            ctypes.c_int(self.num_sims),
-            ctypes.byref(hit_rate)
-        )
+        for Ka in Ka_values:  # Fixed: iterate over actual values, not range
+            hit_rate = ctypes.c_int(0)
+            
+            # Fixed: call with correct parameters (Ka, num_sims, hit_rate)
+            self.lib.run_simulation(
+                ctypes.c_int(int(Ka)),  # Convert to int
+                ctypes.c_int(self.num_sims),
+                ctypes.byref(hit_rate)
+                #not inputting the power yet but will do soon. 
+            )
+            hit_rates.append(hit_rate.value)  # Fixed: append the value, not the ctypes object
         
-        # Calculate reward based on hit rate
-        current_hit_rate = hit_rate.value / self.num_sims
+        # Calculate reward based on average hit rate
+        hit_rates = np.array(hit_rates)
+        avg_hit_rate = np.mean(hit_rates) / self.num_sims  # Normalize by num_sims
+        
+        current_hit_rate = avg_hit_rate
         reward = current_hit_rate - self.best_hit_rate  # Reward improvement
         
         # Update best hit rate
@@ -192,17 +207,18 @@ class CUDAEnvironment:
             'hit_rate': current_hit_rate,
             'best_hit_rate': self.best_hit_rate,
             'step': self.current_step,
-            'buffer_size': len(self.action_buffer)
+            'buffer_size': len(self.action_buffer),
+            'hit_rates': hit_rates  # Add the individual hit rates to info
         }
         
         return next_state, reward, done, info
     
     def get_codebook(self) -> np.ndarray:
         """Get the current codebook as a numpy array."""
-        codebook_size = self.rows * self.cols
+        codebook_size = 512 * (16 * 64)  # n * (L*N)
         codebook_array = (ctypes.c_float * codebook_size)()
-        self.lib.get_codebook(codebook_array, ctypes.c_int(self.rows), ctypes.c_int(self.cols))
-        return np.array(codebook_array, dtype=np.float32).reshape(self.rows, self.cols)
+        self.lib.get_codebook(codebook_array, ctypes.c_int(512), ctypes.c_int(16*64))
+        return np.array(codebook_array, dtype=np.float32).reshape(512, 16*64)
     
     def get_action_buffer(self) -> np.ndarray:
         """Get the current action buffer as a numpy array."""
@@ -212,7 +228,7 @@ class CUDAEnvironment:
 if __name__ == "__main__":
     # Test the environment
     try:
-        env = CUDAEnvironment(cols=25, rows=23, Ka=1, num_sims=100)
+        env = CUDAEnvironment(Ka=1, num_sims=100)
         
         # Reset environment
         state = env.reset()
@@ -221,7 +237,7 @@ if __name__ == "__main__":
         # Take a few steps
         for i in range(5):
             # Generate random action
-            action = torch.randn(25)  # 25-dimensional action
+            action = torch.randn(env.cols)  # Use environment cols
             
             # Take step
             next_state, reward, done, info = env.step(action)

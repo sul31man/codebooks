@@ -17,10 +17,12 @@ import os
 # Add the environments directory to the path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from environment_wrapper import CUDAEnvironment
-
+##reminder to set devices to cuda so that we minimise data travel
 # Your existing SAC classes (keep these as they are)
 state_dim = 10 
-action_dim = 25  # Changed to match environment cols
+L = 16
+N = 64
+action_dim = L*N  # 1024 - matches environment cols
 hidden_dim = action_dim*2
 
 capacity = 1000
@@ -82,9 +84,10 @@ class ReplayBuffer():
 def main():
     """Main training loop with CUDA environment integration."""
     
-    # Initialize the CUDA environment
+    # Initialize the CUDA environment with hardcoded dimensions
     print("Initializing CUDA environment...")
-    env = CUDAEnvironment(cols=25, rows=23, Ka=1, num_sims=1000)
+    # Dimensions are hardcoded in CUDA: n=512 rows, L*N=16*64=1024 cols
+    env = CUDAEnvironment(Ka=1, num_sims=1000)
     
     # Initialize SAC components
     buffer = ReplayBuffer(capacity, batch_size)
@@ -124,15 +127,15 @@ def main():
             action, log_prob = matrix_policy(state)
             
             # Take step in CUDA environment
-            next_state, reward, terminated, truncated, info = env.step(action)
+            next_state, reward, done, info = env.step(action)
             next_state = torch.tensor(next_state, dtype=torch.float32)
             
             # Store experience in buffer
-            buffer.push(state, action, next_state, reward, terminated or truncated)
+            buffer.push(state, action, next_state, reward, done)
             
             episode_reward += reward
             state = next_state
-            done = terminated or truncated
+            done = done  # This is already correct, just making it explicit
         
         # Only train if buffer has enough samples
         if len(buffer.buffer) < batch_size:
