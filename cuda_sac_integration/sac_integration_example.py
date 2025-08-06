@@ -19,7 +19,7 @@ def test_sac_integration():
     
     # Initialize the environment
     print("Initializing CUDA environment...")
-    env = CUDAEnvironment(cols=25, rows=23, Ka=1, num_sims=100)
+    env = CUDAEnvironment(Ka=1, num_sims=100)  # Updated to use new parameters
     
     # Reset environment
     state = env.reset()
@@ -42,7 +42,7 @@ def test_sac_integration():
         while not done and step_count < 20:  # Max 20 steps per episode
             # Simulate SAC agent action (random for this example)
             # In real usage, this would be: action, log_prob = matrix_policy(state)
-            action = torch.randn(25)  # 25-dimensional action from SAC agent
+            action = torch.randn(1024)  # Updated to match hardcoded dimensions: 1024
             
             # Take step in environment
             next_state, reward, done, info = env.step(action)
@@ -93,7 +93,7 @@ def integrate_with_sac_agent():
             # action, log_prob = matrix_policy(state)
             
             # For this example, use random action
-            action = torch.randn(25)
+            action = torch.randn(1024)  # Updated to match hardcoded dimensions: 1024
             
             # Take step in environment
             next_state, reward, done, info = env.step(action)

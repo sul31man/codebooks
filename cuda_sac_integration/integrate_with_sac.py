@@ -20,9 +20,7 @@ from environment_wrapper import CUDAEnvironment
 ##reminder to set devices to cuda so that we minimise data travel
 # Your existing SAC classes (keep these as they are)
 state_dim = 10 
-L = 16
-N = 64
-action_dim = L*N  # 1024 - matches environment cols
+action_dim = 1024  # Changed to match hardcoded CUDA dimensions: L*N=16*64=1024
 hidden_dim = action_dim*2
 
 capacity = 1000
@@ -143,7 +141,7 @@ def main():
             
             episode_reward += reward
             state = next_state
-            done = terminated or truncated
+            # done is already set from the environment step
         
         # Only train if buffer has enough samples
         if len(buffer.buffer) < batch_size:

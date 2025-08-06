@@ -15,7 +15,7 @@ __global__ void mainKernel(float* codebook, int rows, int cols, int Ka, int num_
 #define L 16
 #define n 512 // number of rows for the inner encoding matrix
 #define N 64 // LN is the number of columns for the inner encoding matrix = 2^J, due to the nature of this encoding scheme
-#define j 6 // for the L J bit encoding scheme
+#define J 6 // for the L J bit encoding scheme (renamed from 'j' to avoid conflict)
 
 // Global variables for persistent buffer (host-side)
 float action_buffer[MAX_COLS * MAX_ROWS];  // 2D buffer: rows x cols
