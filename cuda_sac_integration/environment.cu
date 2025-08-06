@@ -10,10 +10,12 @@
 __global__ void mainKernel(float* codebook, int rows, int cols, int Ka, int num_sims, int* hit_rate);
 
 // Constants and buffer management
-#define MAX_COLS 100
-#define MAX_ROWS 100
-#define L 32
-#define n 2048
+#define MAX_COLS 1024
+#define MAX_ROWS 512
+#define L 16
+#define n 512 // number of rows for the inner encoding matrix
+#define N 64 // LN is the number of columns for the inner encoding matrix = 2^J, due to the nature of this encoding scheme
+#define j 6 // for the L J bit encoding scheme
 
 // Global variables for persistent buffer (host-side)
 float action_buffer[MAX_COLS * MAX_ROWS];  // 2D buffer: rows x cols
@@ -21,6 +23,40 @@ int buffer_size = 0;
 int buffer_start = 0;
 int current_rows = 0;
 int current_cols = 0;
+int buffer_initialized = 0;  // Flag to track if buffer has been initialized
+
+// Host function to initialize buffer with random matrix (called from Python)
+extern "C" void initialize_buffer_with_random(int rows, int cols) {
+    // Only initialize if not already initialized
+    if (buffer_initialized) {
+        return;  // Buffer already initialized, don't reinitialize
+    }
+    
+    // Clear existing buffer
+    buffer_size = 0;
+    current_rows = 0;
+    current_cols = 0;
+    
+    // Initialize random seed
+    srand(time(NULL));
+    
+    // Fill buffer with random values
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            // Generate random values between -1 and 1
+            float random_val = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+            action_buffer[i * MAX_COLS + j] = random_val;
+        }
+        buffer_size++;
+    }
+    current_cols = cols;
+    current_rows = buffer_size;
+    buffer_initialized = 1;  // Mark as initialized
+}
+
+//we need to setup the outer encoding scheme so that when we generate the random messages it's used
+//clearly we're are making actions such that it adds rows instead of columns to the matrix we want to produce, which is fine, 
+//we just need to change a few things later !/
 
 // Host function to add action to buffer (called from Python)
 extern "C" void add_action_to_buffer(float* action, int cols) {
@@ -63,31 +99,41 @@ extern "C" void get_codebook(float* out_codebook, int rows, int cols) {
 }
 
 // Host function to run simulation (called from Python)
-extern "C" void run_simulation(int rows, int cols, int Ka, int num_sims, int* hit_rate) {
+//reminder to add streams here and to look into async functions and data splitting to increase speed
+extern "C" void run_simulation(int Ka, int num_sims, int* hit_rate) {
     // Allocate memory on device
     float* d_codebook;
     int* d_hit_rate;
+    int rows = n;  // Always use hardcoded n=512
+    int cols = L*N;  // Always use hardcoded L*N=16*64=1024
     
+    cudaStream_t stream1; 
+    cudaStreamCreate(&stream1);
+
     cudaMalloc(&d_codebook, rows * cols * sizeof(float));
     cudaMalloc(&d_hit_rate, sizeof(int));
     
     // Initialize hit rate to 0
-    cudaMemset(d_hit_rate, 0, sizeof(int));
+    cudaMemsetAsync(d_hit_rate, 0, sizeof(int), stream1);
     
     // Copy current codebook to device
     float* host_codebook = (float*)malloc(rows * cols * sizeof(float));
     get_codebook(host_codebook, rows, cols);
-    cudaMemcpy(d_codebook, host_codebook, rows * cols * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(d_codebook, host_codebook, rows * cols * sizeof(float), cudaMemcpyHostToDevice, stream1);
     
     // Launch simulation kernel
     int threadsPerBlock = 256;
     int blocks = (num_sims + threadsPerBlock - 1) / threadsPerBlock;
-    mainKernel<<<blocks, threadsPerBlock>>>(d_codebook, rows, cols, Ka, num_sims, d_hit_rate);
+    mainKernel<<<blocks, threadsPerBlock, 0, stream1>>>(d_codebook, rows, cols, Ka, num_sims, d_hit_rate);
     
     // Copy result back to host
-    cudaMemcpy(hit_rate, d_hit_rate, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(hit_rate, d_hit_rate, sizeof(int), cudaMemcpyDeviceToHost, stream1);
+    
+    // Synchronize stream before cleanup
+    cudaStreamSynchronize(stream1);
     
     // Clean up
+    cudaStreamDestroy(stream1);
     cudaFree(d_codebook);
     cudaFree(d_hit_rate);
     free(host_codebook);
@@ -112,12 +158,25 @@ __device__ void generate_messages(float* codebook, int Ka, int cols, int rows, f
     // Generate random superposition
     curandState state;
     curand_init(clock64(), blockIdx.x * blockDim.x + threadIdx.x, 0, &state);
-    
+    int section;
+    int rand_user;
+
     for (int i = 0; i < Ka; i++) {
-        int rand_user = (int)(curand_uniform(&state) * cols);
+        section = 1; // for each user we start back in the first section out of the L sections. 
+
+        for (int k = 0; k < N; k++){
+
+        rand_user = (int)(curand_uniform(&state) * N); // pick a random column out of the N columns in each of the L sections
+
         for (int j = 0; j < rows; j++) {
-            messages[j] += codebook[j * cols + rand_user];
+            //we need to select a random vector from each of the L sections
+            messages[j] += codebook[j*cols + rand_user*section]; //this selects a given column that we want
+
+        
         }
+        section++; //so that we start to add the vector from the next section
+    }
+
     }
 }
 
