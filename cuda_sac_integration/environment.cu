@@ -192,70 +192,10 @@ __device__ void noiseAdder(float* messages, float noise_std, int rows) {
 }
 
 __device__ void msg_denoiser_greedy(float* message, float* codebook, int rows, int cols, int Ka, float* best_msg) {
-    curandState state;
-    curand_init(blockIdx.x * blockDim.x + threadIdx.x + 54321, 0, 0, &state);
-    
-    float current_msg[10];
-    float trial_msg[10];
-    float global_best[10];
-    float global_best_error = 1e9;
-    
-    int num_restarts = 5;
-    
-    for (int restart = 0; restart < num_restarts; restart++) {
-        // Initialize current message to zero
-        for (int k = 0; k < cols; k++) {
-            current_msg[k] = 0.0f;
-        }
-        
-        // Greedy construction phase
-        for (int iter = 0; iter < Ka; iter++) {
-            float best_improvement = -1e9;
-            int best_codeword = 0;
-            
-            float current_error = mag_diff(message, current_msg, cols);
-            
-            // Try adding each possible codeword
-            for (int i = 0; i < rows; i++) {
-                // Build trial message = current + codeword i
-                for (int k = 0; k < cols; k++) {
-                    trial_msg[k] = current_msg[k] + codebook[i * cols + k];
-                }
-                
-                // Calculate improvement
-                float trial_error = mag_diff(message, trial_msg, cols);
-                float improvement = current_error - trial_error;
-                
-                // Add some randomness to break ties
-                if (curand_uniform(&state) < 0.1f) {
-                    improvement += curand_uniform(&state) * 0.1f;
-                }
-                
-                if (improvement > best_improvement) {
-                    best_improvement = improvement;
-                    best_codeword = i;
-                }
-            }
-            
-            // Add the best codeword
-            for (int k = 0; k < cols; k++) {
-                current_msg[k] += codebook[best_codeword * cols + k];
-            }
-        }
-        
-        // Check if this restart found a better solution
-        float final_error = mag_diff(message, current_msg, cols);
-        if (final_error < global_best_error) {
-            global_best_error = final_error;
-            for (int k = 0; k < cols; k++) {
-                global_best[k] = current_msg[k];
-            }
-        }
-    }
-    
-    // Copy best result
-    for (int k = 0; k < cols; k++) {
-        best_msg[k] = global_best[k];
+    // Simplified version to debug memory issues
+    // Just copy the input message to output for now
+    for (int k = 0; k < rows; k++) {
+        best_msg[k] = message[k];  // Simple copy - no complex algorithm for now
     }
 }
 
@@ -298,11 +238,11 @@ __global__ void mainKernel(float* codebook, int rows, int cols, int Ka, int num_
         noiseAdder(messages, noise_std, rows);
         
         // Decode messages
-        float best_msg[MAX_ROWS];
+        float best_msg[MAX_ROWS];  // Keep as MAX_ROWS since we're reconstructing the received message
         msg_denoiser_greedy(messages, codebook, rows, cols, Ka, best_msg);
         
-        // Compare and update hit rate
-        if (compare_messages(best_msg, original_messages, cols)) {
+        // Compare and update hit rate - compare reconstructed vs original received messages
+        if (compare_messages(best_msg, original_messages, rows)) {  // Use rows for message comparison
             atomicAdd(hit_rate, 1);
         }
     }

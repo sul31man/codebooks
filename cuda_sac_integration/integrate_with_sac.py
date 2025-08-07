@@ -71,40 +71,53 @@ class QNetwork(nn.Module):
         return x
 
 class ReplayBuffer():
-    def __init__(self, capacity, batch_size):
+    def __init__(self, capacity, batch_size, device):
         self.buffer = deque(maxlen=capacity)
         self.batch_size = batch_size
+        self.device = device
 
     def push(self, state, action, next_state, reward, done):
-        self.buffer.append((state, action, next_state, reward, done))
+        # Move tensors to CPU for storage to save GPU memory
+        state_cpu = state.cpu() if isinstance(state, torch.Tensor) else state
+        action_cpu = action.cpu() if isinstance(action, torch.Tensor) else action
+        next_state_cpu = next_state.cpu() if isinstance(next_state, torch.Tensor) else next_state
+        self.buffer.append((state_cpu, action_cpu, next_state_cpu, reward, done))
 
     def sample(self):
         batch = random.sample(self.buffer, self.batch_size)
         states, actions, next_states, rewards, dones = zip(*batch)
-        return (torch.stack(states), 
-                torch.stack(actions),
-                torch.stack(next_states),
-                torch.tensor(rewards, dtype=torch.float32), 
-                torch.tensor(dones, dtype=torch.float32))
+        return (torch.stack(states).to(self.device), 
+                torch.stack(actions).to(self.device),
+                torch.stack(next_states).to(self.device),
+                torch.tensor(rewards, dtype=torch.float32, device=self.device), 
+                torch.tensor(dones, dtype=torch.float32, device=self.device))
 
 def main():
     """Main training loop with CUDA environment integration."""
+    
+    # Check for CUDA availability but use CPU for PyTorch to avoid conflicts with custom CUDA library
+    device = torch.device("cpu")  # Force CPU to avoid CUDA context conflicts
+    print(f"Using device: {device}")
+    print("Note: Using CPU for PyTorch to avoid conflicts with custom CUDA environment")
+    if torch.cuda.is_available():
+        print(f"GPU available: {torch.cuda.get_device_name()}")
+        print("Custom CUDA environment will still use GPU acceleration")
     
     # Initialize the CUDA environment with hardcoded dimensions
     print("Initializing CUDA environment...")
     # Dimensions are hardcoded in CUDA: n=512 rows, L*N=16*64=1024 cols
     env = CUDAEnvironment(Ka=1, num_sims=1000)
     
-    # Initialize SAC components
-    buffer = ReplayBuffer(capacity, batch_size)
-    matrix_policy = CodewordPolicy(state_dim, action_dim, hidden_dim)
-    q_1 = QNetwork(state_dim, action_dim, hidden_dim)
-    q_2 = QNetwork(state_dim, action_dim, hidden_dim)
+    # Initialize SAC components and move to GPU
+    buffer = ReplayBuffer(capacity, batch_size, device)
+    matrix_policy = CodewordPolicy(state_dim, action_dim, hidden_dim).to(device)
+    q_1 = QNetwork(state_dim, action_dim, hidden_dim).to(device)
+    q_2 = QNetwork(state_dim, action_dim, hidden_dim).to(device)
     
-    tq_1 = QNetwork(state_dim, action_dim, hidden_dim)
+    tq_1 = QNetwork(state_dim, action_dim, hidden_dim).to(device)
     tq_1.load_state_dict(q_1.state_dict())
     
-    tq_2 = QNetwork(state_dim, action_dim, hidden_dim)
+    tq_2 = QNetwork(state_dim, action_dim, hidden_dim).to(device)
     tq_2.load_state_dict(q_2.state_dict())
     
     criterion = nn.MSELoss()
@@ -115,6 +128,7 @@ def main():
     print("Starting SAC training with CUDA environment...")
     
     for episode in range(num_episodes):
+        print(f"\n=== Episode {episode} ===")
         done = False
         log_probs = []
         states = []
@@ -123,33 +137,48 @@ def main():
         rewards = []
         
         # Reset environment and get initial state
+        print("  Resetting environment...")
         state = env.reset()
-        state = torch.tensor(state, dtype=torch.float32)
+        state = torch.tensor(state, dtype=torch.float32, device=device)
         
         episode_reward = 0.0
+        step_count = 0
         
         while not done:
-            # Generate action using SAC policy
+            step_count += 1
+            if step_count % 10 == 0:
+                print(f"    Step {step_count}...")
+            
+            # Generate action using SAC policy (on GPU)
             action, log_prob = matrix_policy(state)
             
-            # Take step in CUDA environment
-            next_state, reward, done, info = env.step(action)
-            next_state = torch.tensor(next_state, dtype=torch.float32)
+            # Take step in CUDA environment (convert action to CPU for environment)
+            action_cpu = action.cpu() if action.is_cuda else action
+            next_state, reward, done, info = env.step(action_cpu)
+            next_state = torch.tensor(next_state, dtype=torch.float32, device=device)
             
-            # Store experience in buffer
+            # Store experience in buffer (action stays on GPU for buffer)
             buffer.push(state, action, next_state, reward, done)
             
             episode_reward += reward
             state = next_state
             # done is already set from the environment step
         
+        print(f"  Episode completed: {step_count} steps, reward={episode_reward:.4f}")
+        
         # Only train if buffer has enough samples
         if len(buffer.buffer) < batch_size:
+            print(f"  Skipping training - buffer size: {len(buffer.buffer)}/{batch_size}")
             continue
+        
+        print(f"  Starting training with buffer size: {len(buffer.buffer)}")
         
         # Training loop
         num_epochs = 10
         for epoch in range(num_epochs):
+            if epoch % 5 == 0:
+                print(f"    Training epoch {epoch}/{num_epochs}")
+            
             states, actions, next_states, rewards, dones = buffer.sample()
             
             # Compute target Q-values with no gradients
@@ -192,9 +221,11 @@ def main():
             for target_param, param in zip(tq_2.parameters(), q_2.parameters()):
                 target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
         
+        print(f"  Training completed for episode {episode}")
+        
         # Print progress
-        if episode % 100 == 0:
-            print(f"Episode {episode}: Reward={episode_reward:.4f}, Best Hit Rate={env.best_hit_rate:.4f}")
+        if episode % 10 == 0:  # Changed from 100 to 10 for more frequent updates
+            print(f"*** Episode {episode}: Reward={episode_reward:.4f}, Best Hit Rate={env.best_hit_rate:.4f} ***")
     
     print("Training completed!")
     print(f"Final best hit rate: {env.best_hit_rate:.4f}")

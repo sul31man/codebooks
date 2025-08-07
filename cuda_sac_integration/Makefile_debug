@@ -1,0 +1,52 @@
+# Debug Makefile for CUDA Environment with enhanced error checking
+
+NVCC = nvcc
+CC = gcc
+
+# Debug flags for comprehensive error checking
+NVCC_FLAGS = -shared -Xcompiler -fPIC -O2 -g -G \
+             -gencode arch=compute_50,code=sm_50 \
+             -gencode arch=compute_60,code=sm_60 \
+             -gencode arch=compute_70,code=sm_70 \
+             -gencode arch=compute_75,code=sm_75 \
+             -gencode arch=compute_80,code=sm_80 \
+             -gencode arch=compute_86,code=sm_86 \
+             -Xcompiler -Wall -Xcompiler -Wextra \
+             -lineinfo --ptxas-options=-v
+
+# Target library
+TARGET = libenvironment_debug.so
+SOURCE = environment_debug.cu
+
+.PHONY: all clean debug test
+
+all: $(TARGET)
+
+$(TARGET): $(SOURCE)
+	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+	@echo "Debug library compiled successfully: $(TARGET)"
+	@echo "Debug features enabled:"
+	@echo "  - Comprehensive CUDA error checking"
+	@echo "  - Memory bounds validation"  
+	@echo "  - Pointer safety checks"
+	@echo "  - Aligned memory allocation"
+	@echo "  - Debug print statements"
+
+debug: $(TARGET)
+	@echo "Debug build complete. Use CUDA_LAUNCH_BLOCKING=1 for synchronous kernel execution."
+
+clean:
+	rm -f $(TARGET) *.o
+
+test: $(TARGET)
+	@echo "Running basic library test..."
+	python3 -c "import ctypes; lib = ctypes.CDLL('./$(TARGET)'); print('✅ Library loads successfully')"
+
+# Help target
+help:
+	@echo "Available targets:"
+	@echo "  all    - Build debug library (default)"
+	@echo "  debug  - Build with debug info"
+	@echo "  clean  - Remove compiled files"
+	@echo "  test   - Test library loading"
+	@echo "  help   - Show this help" 

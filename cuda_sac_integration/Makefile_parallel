@@ -1,0 +1,50 @@
+# Makefile for parallel CUDA environment
+
+NVCC = nvcc
+CC = gcc
+
+# Optimization and stability flags (reduced register usage, better memory management)
+NVCC_FLAGS = -shared -Xcompiler -fPIC -O2 \
+             -gencode arch=compute_50,code=sm_50 \
+             -gencode arch=compute_60,code=sm_60 \
+             -gencode arch=compute_70,code=sm_70 \
+             -gencode arch=compute_75,code=sm_75 \
+             -gencode arch=compute_80,code=sm_80 \
+             -gencode arch=compute_86,code=sm_86 \
+             -Xcompiler -Wall -Xcompiler -Wextra \
+             --ptxas-options=-v \
+             -maxrregcount=32 \
+             -Xptxas -dlcm=cg
+
+# Target library
+TARGET = libenvironment_parallel.so
+SOURCE = environment_parallel.cu
+
+.PHONY: all clean test
+
+all: $(TARGET)
+
+$(TARGET): $(SOURCE)
+	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+	@echo "Parallel library compiled successfully: $(TARGET)"
+	@echo "Features enabled:"
+	@echo "  - Parallel Ka value processing"
+	@echo "  - Thread-local memory (no shared memory conflicts)"
+	@echo "  - Reduced register usage (maxrregcount=32)"
+	@echo "  - Conservative memory management"
+	@echo "  - Strict bounds checking"
+
+clean:
+	rm -f $(TARGET) *.o
+
+test: $(TARGET)
+	@echo "Running basic library test..."
+	python3 -c "import ctypes; lib = ctypes.CDLL('./$(TARGET)'); print('✅ Library loads successfully')"
+
+# Help target
+help:
+	@echo "Available targets:"
+	@echo "  all    - Build parallel library (default)"
+	@echo "  clean  - Remove compiled files"
+	@echo "  test   - Test library loading"
+	@echo "  help   - Show this help" 

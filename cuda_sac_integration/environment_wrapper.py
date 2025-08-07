@@ -141,9 +141,31 @@ class CUDAEnvironment:
         Returns:
             Tuple of (next_state, reward, done, info)
         """
-        # Convert action to numpy and ensure it's 1D
+        # Safe tensor conversion with proper dtype and contiguity
         if isinstance(action, torch.Tensor):
-            action = action.detach().cpu().numpy()
+            # Ensure tensor is on CPU, float32, and contiguous
+            if action.is_cuda:
+                action = action.cpu()
+            
+            # Ensure proper dtype and contiguity
+            if action.dtype != torch.float32:
+                action = action.to(dtype=torch.float32)
+            
+            if not action.is_contiguous():
+                action = action.contiguous()
+            
+            # Convert to numpy with explicit copy to ensure memory safety
+            action = action.detach().numpy().copy()
+        
+        # Ensure action is float32 numpy array
+        if not isinstance(action, np.ndarray):
+            action = np.array(action, dtype=np.float32)
+        elif action.dtype != np.float32:
+            action = action.astype(np.float32)
+        
+        # Ensure contiguous memory layout
+        if not action.flags.c_contiguous:
+            action = np.ascontiguousarray(action, dtype=np.float32)
         
         if action.ndim > 1:
             action = action.flatten()
@@ -152,8 +174,14 @@ class CUDAEnvironment:
         if len(action) != self.cols:
             raise ValueError(f"Action must have {self.cols} elements, got {len(action)}")
         
-        # Convert action to C array
-        action_array = (ctypes.c_float * self.cols)(*action)
+        # Convert action to C array with explicit pointer check
+        try:
+            action_array = (ctypes.c_float * self.cols)(*action)
+        except Exception as e:
+            print(f"Error converting action to C array: {e}")
+            print(f"Action shape: {action.shape}, dtype: {action.dtype}")
+            print(f"Action contiguous: {action.flags.c_contiguous}")
+            raise
         
         # Add action to the buffer
         self.lib.add_action_to_buffer(action_array, ctypes.c_int(self.cols))
