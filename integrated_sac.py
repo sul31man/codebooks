@@ -221,6 +221,8 @@ def main():
     # Initialize the global codebook for the batch
     global_codebook = env.initialise_global_codebook(batch_size)
     print(f"Global codebook initialized with shape: {global_codebook.shape}")
+    # Derive rows from codebook so sensing matrix matches environment rows
+    rows = int(global_codebook.shape[1])
     
     # AMP decoder configuration (must match environment.cu globals L,J)
     amp_L = 16
@@ -230,9 +232,9 @@ def main():
     amp_T_max = 15
     amp_tol = 1e-6
     amp_P_hat = 1.0
-    # Sensing matrix on CPU in float64
-    # Use float64 on CPU to match AMP decoder's expected dtype
-    A_sensing = (torch.randn(amp_n, amp_N, dtype=torch.float64, device='cpu') / (amp_n ** 0.5)).contiguous()
+    # Sensing matrix S on CPU in float64 with shape [n, rows]
+    # Use float64 to match AMP decoder; environment converts to CUDA and builds A_eff = S * C_b
+    A_sensing = (torch.randn(amp_n, rows, dtype=torch.float64, device='cpu') / (amp_n ** 0.5)).contiguous()
     
     # Initialize SAC components
     buffer = ReplayBuffer(capacity, batch_size, device)

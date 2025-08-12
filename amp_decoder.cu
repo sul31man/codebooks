@@ -545,3 +545,120 @@ extern "C" int amp_decode_gpu_entry(double* A, double* y, double* theta_out,
                                      double P_hat, int T_max, double tol) {
     return amp_decode_gpu(A, y, theta_out, n, N, L, J, Ka, P_hat, T_max, tol);
 }
+
+// Device-friendly entry: expects A in column-major on device and y on device.
+// Writes theta_out to device (no host copies), preserving full GPU-GPU pipeline.
+extern "C" int amp_decode_gpu_device_entry(double* d_A_col_major, double* d_y, double* d_theta_out,
+                                            int n, int N, int L, int J, int Ka,
+                                            double P_hat, int T_max, double tol) {
+    // Initialize cuBLAS
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+    // Allocate working buffers on device
+    double *d_theta, *d_z, *d_theta_next, *d_z_next, *d_v;
+    double *d_temp_vec, *d_p_k, *d_f_prime;
+    cudaMalloc(&d_theta, N * sizeof(double));
+    cudaMalloc(&d_z, n * sizeof(double));
+    cudaMalloc(&d_theta_next, N * sizeof(double));
+    cudaMalloc(&d_z_next, n * sizeof(double));
+    cudaMalloc(&d_v, N * sizeof(double));
+    cudaMalloc(&d_temp_vec, n * sizeof(double));
+    cudaMalloc(&d_p_k, (Ka + 1) * sizeof(double));
+    cudaMalloc(&d_f_prime, N * sizeof(double));
+
+    // Initialize
+    cudaMemset(d_theta, 0, N * sizeof(double));
+    cudaMemcpy(d_z, d_y, n * sizeof(double), cudaMemcpyDeviceToDevice);
+
+    // AMP parameters
+    double sqrt_P = sqrt(P_hat / L);
+    double alpha = (2.0 * J * L) / n;
+
+    // Prior probabilities h_p_k on host then copy to device
+    double* h_p_k = (double*)malloc((Ka + 1) * sizeof(double));
+    for (int k = 0; k <= Ka; k++) {
+        double prob_active = pow(2.0, -J);
+        double prob_inactive = 1.0 - prob_active;
+        h_p_k[k] = binomial_coeff(Ka, k) * pow(prob_active, k) * pow(prob_inactive, Ka - k);
+    }
+    cudaMemcpy(d_p_k, h_p_k, (Ka + 1) * sizeof(double), cudaMemcpyHostToDevice);
+    free(h_p_k);
+
+    // Host arrays for convergence checking
+    double* h_theta = (double*)malloc(N * sizeof(double));
+    double* h_theta_next = (double*)malloc(N * sizeof(double));
+
+    // Grid and block dimensions
+    int blockSize = 256;
+    int gridSize_N = (N + blockSize - 1) / blockSize;
+    int gridSize_n = (n + blockSize - 1) / blockSize;
+
+    // cuBLAS constants
+    const double one = 1.0, zero = 0.0, neg_one = -1.0;
+
+    // Main AMP iterations
+    for (int t = 0; t < T_max; t++) {
+        // tau = ||z|| / sqrt(n)
+        double tau_squared;
+        cublasDdot(handle, n, d_z, 1, d_z, 1, &tau_squared);
+        double tau = sqrt(tau_squared / n);
+
+        // v = A^T z + theta   (A is column-major)
+        cublasDgemv(handle, CUBLAS_OP_T, n, N, &one, d_A_col_major, n, d_z, 1, &zero, d_v, 1);
+        cublasDaxpy(handle, N, &one, d_theta, 1, d_v, 1);
+
+        // Denoiser
+        amp_denoiser_kernel<<<gridSize_N, blockSize>>>(d_v, d_theta_next, d_f_prime,
+                                                       d_p_k, Ka, sqrt_P, tau, N);
+        cudaDeviceSynchronize();
+
+        // mean(f') for Onsager
+        double mean_f_prime;
+        double sum_f_prime = 0.0;
+        double* h_f_prime = (double*)malloc(N * sizeof(double));
+        cudaMemcpy(h_f_prime, d_f_prime, N * sizeof(double), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < N; i++) sum_f_prime += h_f_prime[i];
+        mean_f_prime = sum_f_prime / N;
+        free(h_f_prime);
+
+        // z_next = y - A theta_next + alpha * z * mean(f')
+        cublasDgemv(handle, CUBLAS_OP_N, n, N, &one, d_A_col_major, n, d_theta_next, 1, &zero, d_temp_vec, 1);
+        cudaMemcpy(d_z_next, d_y, n * sizeof(double), cudaMemcpyDeviceToDevice);
+        cublasDaxpy(handle, n, &neg_one, d_temp_vec, 1, d_z_next, 1);
+        double alpha_term = alpha * mean_f_prime;
+        cublasDaxpy(handle, n, &alpha_term, d_z, 1, d_z_next, 1);
+
+        // Convergence check
+        cudaMemcpy(h_theta, d_theta, N * sizeof(double), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_theta_next, d_theta_next, N * sizeof(double), cudaMemcpyDeviceToHost);
+        double diff_norm = 0.0;
+        for (int i = 0; i < N; i++) {
+            double diff = h_theta_next[i] - h_theta[i];
+            diff_norm += diff * diff;
+        }
+        diff_norm = sqrt(diff_norm / N);
+        if (diff_norm < tol) {
+            cudaMemcpy(d_theta_out, d_theta_next, N * sizeof(double), cudaMemcpyDeviceToDevice);
+            // Cleanup
+            free(h_theta); free(h_theta_next);
+            cudaFree(d_theta); cudaFree(d_z); cudaFree(d_theta_next); cudaFree(d_z_next);
+            cudaFree(d_v); cudaFree(d_temp_vec); cudaFree(d_p_k); cudaFree(d_f_prime);
+            cublasDestroy(handle);
+            return t + 1;
+        }
+
+        // Update
+        cudaMemcpy(d_theta, d_theta_next, N * sizeof(double), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_z, d_z_next, n * sizeof(double), cudaMemcpyDeviceToDevice);
+    }
+
+    // Not converged - return final estimate
+    cudaMemcpy(d_theta_out, d_theta_next, N * sizeof(double), cudaMemcpyDeviceToDevice);
+
+    free(h_theta); free(h_theta_next);
+    cudaFree(d_theta); cudaFree(d_z); cudaFree(d_theta_next); cudaFree(d_z_next);
+    cudaFree(d_v); cudaFree(d_temp_vec); cudaFree(d_p_k); cudaFree(d_f_prime);
+    cublasDestroy(handle);
+    return T_max;
+}
