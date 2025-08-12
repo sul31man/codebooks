@@ -3,8 +3,11 @@
 #include <cuda_runtime.h>
 #include <stdio.h> 
 #include <time.h>
-#include <vector>
+#include <vector> 
 #include <cstring>  // For memset 
+extern "C" int amp_decode_gpu_entry(double* A, double* y, double* theta_out,
+                                     int n, int N, int L, int J, int Ka,
+                                     double P_hat, int T_max, double tol);
 
 //can we make the codebook a torch tensor ? 
 int rows = 512; 
@@ -41,7 +44,7 @@ void update_global_codebook(torch::Tensor actions, int batch_size){
     for (int i=0; i < batch_size; i++){
 
         torch::Tensor our_codebook = global_codebook[i];
-        
+
 
 
         //now we shift columns left and add new action to last column
@@ -74,7 +77,7 @@ torch::Tensor reset_batch(int batch_size){
 
 
 
-/
+
 __device__ void select_messages(const float* env_codebook,
                                 int rows,
                                 int cols,
@@ -270,6 +273,68 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> step(torch::Tensor actio
     return std::make_tuple(hit_rate_percentages, rewards, dones);
 }
 
+// Alternate step using AMP decoder path (keeps simulator kernel unchanged)
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> step_amp(torch::Tensor actions,
+                                                                 torch::Tensor sensing_matrix,
+                                                                 int n, int N,
+                                                                 int T_max, double tol,
+                                                                 double P_hat) {
+    int batch_size = actions.size(0);
+    // Update codebook first (same as normal path)
+    update_global_codebook(actions, batch_size);
+
+    // Prepare output tensors
+    auto f32_cpu = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+    torch::Tensor hit_rate_percentages = torch::zeros({batch_size}, f32_cpu);
+    torch::Tensor rewards = torch::zeros({batch_size}, f32_cpu);
+    torch::Tensor dones = torch::zeros({batch_size}, torch::TensorOptions().dtype(torch::kBool).device(torch::kCPU));
+
+    // Expect sensing_matrix shape [n, N] on CPU double or float
+    torch::Tensor A_cpu = sensing_matrix.to(torch::kCPU).to(torch::kFloat64).contiguous();
+
+    for (int b = 0; b < batch_size; b++) {
+        // Build a synthetic measurement y from current env codebook slice as placeholder
+        // In your full integration, compute y from the channel output buffer instead
+        torch::Tensor env_cb = global_codebook[b].to(torch::kCPU).to(torch::kFloat32).contiguous(); // [rows, cols] float32
+        // Extract the last column and cast to float64 for AMP
+        torch::Tensor last_col = env_cb.index({torch::indexing::Slice(), -1}).to(torch::kFloat64).contiguous(); // [rows]
+        // Map into a length-N vector (N must match L*2^J). Copy first rows entries
+        torch::Tensor theta0 = torch::zeros({N}, torch::kFloat64);
+        int copyN = std::min((int)theta0.size(0), (int)last_col.size(0));
+        auto theta0_a = theta0.data_ptr<double>();
+        auto last_col_a = last_col.data_ptr<double>();
+        for (int i = 0; i < copyN; i++) theta0_a[i] = last_col_a[i];
+
+        // y = A * theta0 (CPU temporary build)
+        torch::Tensor y_cpu = torch::zeros({n}, torch::kFloat64);
+        // simple matvec
+        {
+            auto A_ptr = A_cpu.data_ptr<double>();
+            auto th_ptr = theta0.data_ptr<double>();
+            auto y_ptr = y_cpu.data_ptr<double>();
+            for (int i = 0; i < n; i++) {
+                double acc = 0.0;
+                for (int j = 0; j < N; j++) acc += A_ptr[i * N + j] * th_ptr[j];
+                y_ptr[i] = acc;
+            }
+        }
+
+        // Run AMP on GPU (entry expects raw pointers)
+        std::vector<double> theta_out(N, 0.0);
+        int iters = amp_decode_gpu_entry(A_cpu.data_ptr<double>(),
+                                         y_cpu.data_ptr<double>(),
+                                         theta_out.data(),
+                                         n, N, L, J, Ka,
+                                         P_hat, T_max, tol);
+
+        // Placeholder reward: fraction of small residual (for now set to 0)
+        hit_rate_percentages[b] = 0.0f;
+        rewards[b] = 0.0f;
+        dones[b] = false;
+    }
+
+    return std::make_tuple(hit_rate_percentages, rewards, dones);
+}
 // Function to get the current global codebook
 torch::Tensor get_codebook() {
     if (!codebook_initialised) {
@@ -283,6 +348,9 @@ torch::Tensor get_codebook() {
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("initialise_global_codebook", &initialise_global_codebook, "Initialize global codebook");
     m.def("step", &step, "Environment step function");
+    m.def("step_amp", &step_amp, "Environment step function using AMP decoder",
+          pybind11::arg("actions"), pybind11::arg("sensing_matrix"), pybind11::arg("n"), pybind11::arg("N"),
+          pybind11::arg("T_max") = 15, pybind11::arg("tol") = 1e-6, pybind11::arg("P_hat") = 1.0);
     m.def("reset_batch", &reset_batch, "Reset environment batch");
     m.def("get_codebook", &get_codebook, "Get current global codebook");
 }

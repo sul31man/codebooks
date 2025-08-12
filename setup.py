@@ -9,6 +9,7 @@ setup(
             name='env',  # This will be the import name
             sources=[
                 'environment.cu',
+                'amp_decoder.cu'
             ],
             include_dirs=[
                 # Add any additional include directories here if needed

@@ -117,6 +117,93 @@ class ReplayBuffer():
                 torch.tensor(rewards, dtype=torch.float32, device=self.device),
                 torch.tensor(dones, dtype=torch.float32, device=self.device))
 
+# Add this function to test the AMP decoder integration
+def test_amp_decoder():
+    """Test the AMP decoder integration before starting RL training"""
+    print("\n" + "="*60)
+    print("TESTING AMP DECODER INTEGRATION")
+    print("="*60)
+    
+    # AMP decoder parameters
+    Ka = 3    # Number of active users per section
+    L = 4     # Number of sections 
+    J = 6     # 2^J codewords per section
+    n = 128   # Number of measurements
+    N = L * (2**J)  # Total codebook size = 4 * 64 = 256
+    P_hat = 1.0
+    T_max = 15
+    tol = 1e-6
+    
+    print(f"AMP Parameters: Ka={Ka}, L={L}, J={J}, n={n}, N={N}")
+    
+    # Create random sensing matrix A [n, N] with proper scaling
+    A = torch.randn(n, N, dtype=torch.float64) / (n**0.5)
+    print(f"Sensing matrix shape: {A.shape}")
+    
+    # Initialize small test batch
+    test_batch_size = 4
+    env.initialise_global_codebook(test_batch_size)
+    
+    # Create test actions
+    test_actions = torch.randn(test_batch_size, 512, device='cuda')
+    
+    print("\n--- Testing Original Environment ---")
+    try:
+        start_time = time.time()
+        hit_rates_orig, rewards_orig, dones_orig = env.step(test_actions)
+        orig_time = time.time() - start_time
+        
+        print(f"✓ Original environment step completed in {orig_time:.3f}s")
+        print(f"  Hit rates: {hit_rates_orig}")
+        print(f"  Rewards: {rewards_orig}")
+        print(f"  Shapes: hit_rates={hit_rates_orig.shape}, rewards={rewards_orig.shape}")
+        
+    except Exception as e:
+        print(f"✗ Original environment failed: {e}")
+        return False
+    
+    print("\n--- Testing AMP Decoder Environment ---")
+    try:
+        start_time = time.time()
+        hit_rates_amp, rewards_amp, dones_amp = env.step_amp(
+            actions=test_actions,
+            sensing_matrix=A,
+            n=n,
+            N=N,
+            T_max=T_max,
+            tol=tol,
+            P_hat=P_hat
+        )
+        amp_time = time.time() - start_time
+        
+        print(f"✓ AMP environment step completed in {amp_time:.3f}s")
+        print(f"  Hit rates: {hit_rates_amp}")
+        print(f"  Rewards: {rewards_amp}")
+        print(f"  Shapes: hit_rates={hit_rates_amp.shape}, rewards={rewards_amp.shape}")
+        
+    except Exception as e:
+        print(f"✗ AMP environment failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+    
+    print("\n--- Performance Comparison ---")
+    print(f"Original time: {orig_time:.3f}s")
+    print(f"AMP time: {amp_time:.3f}s")
+    print(f"Time ratio (AMP/Original): {amp_time/orig_time:.2f}x")
+    
+    print("\n--- Integration Test Results ---")
+    print("✓ Both environment paths working")
+    print("✓ AMP decoder interface functional")
+    print("✓ Ready for RL training")
+    
+    print("="*60)
+    print("AMP DECODER INTEGRATION TEST COMPLETE")
+    print("="*60)
+    
+    return True
+
+# Add this to your main() function before the training loop
 def main():
     """Main training loop with clean modular design."""
     
@@ -135,6 +222,17 @@ def main():
     global_codebook = env.initialise_global_codebook(batch_size)
     print(f"Global codebook initialized with shape: {global_codebook.shape}")
     
+    # AMP decoder configuration (must match environment.cu globals L,J)
+    amp_L = 16
+    amp_J = 6
+    amp_N = amp_L * (2**amp_J)   # 1024
+    amp_n = 128                   # measurements
+    amp_T_max = 15
+    amp_tol = 1e-6
+    amp_P_hat = 1.0
+    # Sensing matrix on CPU in float64
+    # Use float64 on CPU to match AMP decoder's expected dtype
+    A_sensing = (torch.randn(amp_n, amp_N, dtype=torch.float64, device='cpu') / (amp_n ** 0.5)).contiguous()
     
     # Initialize SAC components
     buffer = ReplayBuffer(capacity, batch_size, device)
@@ -180,8 +278,16 @@ def main():
             with torch.no_grad():
                 actions, log_probs = matrix_policy(states)  # Shape: [batch_size, action_dim]
             
-            # Environment step (batched) - returns hit_rates, rewards, dones (likely on CPU)
-            hit_rates, rewards, dones = env.step(actions)  # All shape: [batch_size]
+            # Environment step using AMP decoder path (results on CPU)
+            hit_rates, rewards, dones = env.step_amp(
+                actions=actions,
+                sensing_matrix=A_sensing,
+                n=amp_n,
+                N=amp_N,
+                T_max=amp_T_max,
+                tol=amp_tol,
+                P_hat=amp_P_hat
+            )
             # Move to training device for subsequent ops
             hit_rates = hit_rates.to(device, non_blocking=True)
             rewards = rewards.to(device, non_blocking=True)

@@ -539,24 +539,9 @@ void test_amp_decoder() {
     printf("\n=== Test Complete ===\n");
 }
 
-// Main function
-int main() {
-    printf("AMP Decoder Test Program\n");
-    printf("========================\n\n");
-    
-    // Check CUDA availability
-    int deviceCount;
-    cudaError_t error = cudaGetDeviceCount(&deviceCount);
-    
-    if (error != cudaSuccess || deviceCount == 0) {
-        printf("No CUDA devices found. Running CPU-only test.\n\n");
-        // Could add CPU-only test here
-        return 1;
-    } else {
-        printf("Found %d CUDA device(s). Running full test.\n\n", deviceCount);
-    }
-    
-    test_amp_decoder();
-    
-    return 0;
+// Expose an entry point for integration (no standalone main in extension build)
+extern "C" int amp_decode_gpu_entry(double* A, double* y, double* theta_out,
+                                     int n, int N, int L, int J, int Ka,
+                                     double P_hat, int T_max, double tol) {
+    return amp_decode_gpu(A, y, theta_out, n, N, L, J, Ka, P_hat, T_max, tol);
 }
