@@ -203,7 +203,6 @@ def test_amp_decoder():
     
     return True
 
-# Add this to your main() function before the training loop
 def main():
     """Main training loop with clean modular design."""
     
