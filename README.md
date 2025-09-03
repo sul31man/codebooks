@@ -1,3 +1,3 @@
-Benchmark branch contains the files for understanding the performance of the different codebooks
+integrated_sac.py and environment.cu are the necessary files to look at. 
 
-RL branch contains the files for working on the different deep learning techniques building the codebooks
+integrated_sac.py is the pytorch algorithm which calls the environment 
